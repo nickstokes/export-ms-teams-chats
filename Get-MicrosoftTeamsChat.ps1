@@ -36,8 +36,10 @@ Param(
     [Parameter(Mandatory = $false, HelpMessage = "Export location of where the HTML files will be saved.")] [string] $exportFolder = "out",
     [Parameter(Mandatory = $false, HelpMessage = "If specified, only group chats this string (exact match) will be exported")] [string[]] $toExport = $null,
     [Parameter(Mandatory = $false, HelpMessage = "If a chat with the same file name already exists, this will create the new file with a number at the end instead (such as (1))")] [switch] $avoidOverwrite,
-    [Parameter(Mandatory = $false, HelpMessage = "The client id of the Azure AD App Registration")] [string] $clientId = "7f586887-37d3-4d1f-89cf-153c7d1bbe54",
-    [Parameter(Mandatory = $false, HelpMessage = "The tenant id of the Azure AD environment the user logs into")] [string] $tenantId = "organizations"
+    [Parameter(Mandatory = $false, HelpMessage = "The client id of the Azure AD App Registration")] [string] $clientId = "",
+    [Parameter(Mandatory = $false, HelpMessage = "The tenant id of the Azure AD environment the user logs into")] [string] $tenantId = "",
+    [Parameter(Mandatory = $false, HelpMessage = "Use the cache files if they exist")] [boolean] $useCache = $false,
+    [Parameter(Mandatory = $false, HelpMessage = "Save data to local cache")] [boolean] $cacheData = $true
 )
 
 #################################
@@ -45,6 +47,7 @@ Param(
 #################################
 
 Set-Location $PSScriptRoot
+
 
 $verbose = $PSBoundParameters["verbose"]
 
@@ -70,23 +73,51 @@ $assetsFolder = Join-Path -Path $exportFolder -ChildPath "assets"
 if (-not(Test-Path -Path $assetsFolder)) { New-Item -ItemType Directory -Path $assetsFolder | Out-Null }
 $exportFolder = (Resolve-Path -Path $exportFolder).ToString()
 
+$cacheFolder =  Join-Path -Path $exportFolder -ChildPath "data"
+if (($cacheData -or $useCache) -and -not(Test-Path -Path $cacheFolder)) {
+    New-Item -ItemType Directory -Path $cacheFolder | Out-Null 
+    $cacheFolder = (Resolve-Path -Path $cacheFolder).ToString()
+}
+
 Write-Host "Your chats will be exported to $exportFolder."
 
 $me = Invoke-RestMethod -Method Get -Uri "https://graph.microsoft.com/v1.0/me" -Headers @{
     "Authorization" = "Bearer $(Get-GraphAccessToken $clientId $tenantId)"
 }
 
+if($useCache) { LoadUserCache(Get-CacheFileName $cacheFolder $me.id "users") }
+
 Write-Host ("Getting all chats, please wait... This may take some time.")
-$chats = Get-Chats $clientId $tenantId
+
+if($useCache){ 
+    $chats = Get-Content -Raw (Get-CacheFilename $cacheFolder $me.id "chats") | ConvertFrom-Json 
+}
+else {
+    $chats = Get-Chats $clientId $tenantId
+    if($cacheData) { 
+        $chats | ConvertTo-Json -Depth 10 | Out-File (Get-CacheFilename $cacheFolder $me.id "chats") 
+    }
+}
+
 Write-Host ("" + $chats.count + " possible chat chats found.")
 
 $chatIndex = 0
 
-foreach ($chat in $chats) {
+foreach ($chat in ($chats | Where-Object {$_.chatType -ne "unknownFutureValue"})) {
     Write-Progress -Activity "Exporting Chats" -Status "Chat $($chatIndex) of $($chats.count)" -PercentComplete $(($chatIndex / $chats.count) * 100)
     $chatIndex += 1
 
-    $members = Get-Members $chat $clientId $tenantId
+    
+    if($useCache) {
+        $members = Get-Content -Raw (Get-CacheFilename $cacheFolder $chat.Id "members") | ConvertFrom-Json
+    }
+    else{
+        $members = Get-Members $chat $clientId $tenantId
+        if($cacheData) { 
+            $members | ConvertTo-Json -Depth 10| Out-File (Get-CacheFilename $cacheFolder $chat.Id "members") 
+        }
+    }
+    
     $name = ConvertTo-ChatName $chat $members $me $clientId $tenantId
     
     if ($null -ne $toExport -and $toExport -notcontains $name) {
@@ -94,19 +125,32 @@ foreach ($chat in $chats) {
         continue
     }
 
-    $messages = Get-Messages $chat $clientId $tenantId
+    if($useCache) {
+        $messages = Get-Content -Raw (Get-CacheFilename $cacheFolder $chat.id "messages") | ConvertFrom-Json
+    }
+    else {
+        $messages = Get-Messages $chat $clientId $tenantId
+        if($cacheData) {
+            $messages | ConvertTo-Json -Depth 10 | Out-File (Get-CacheFilename $cacheFolder $chat.id "messages")
+        }
+    }
+    
+    Get-DisplayNamesFromMessages($messages)
+    $name = ConvertTo-ChatName $chat $members $me $clientId $tenantId
+
+    $actualMessageCount = @($messages | Where-Object {$_.messageType -ne "systemEventMessage"}).Count
 
     $messagesHTML = $null
 
-    if (($messages.count -gt 0) -and (-not([string]::isNullorEmpty($name)))) {
+    if (($messages.count -gt 0) -and (-not([string]::isNullorEmpty($name))) -and ($actualMessageCount -gt 0)) {
 
-        Write-Host -ForegroundColor White ("`r`n$name :: $($messages.count) messages.")
+        Write-Host -ForegroundColor White ("`r`n$name :: $actualMessageCount messages.")
 
         # download profile pictures for use later
         Write-Host "Downloading profile pictures..."
 
         foreach ($member in $members) {
-            Get-ProfilePicture $member.userId $assetsFolder $clientId $tenantId | Out-Null
+            Get-ProfilePicture $member.userId $assetsFolder $clGet-CientId $tenantId | Out-Null
         }
 
         Write-Host "Processing messages..."
@@ -171,6 +215,12 @@ foreach ($chat in $chats) {
 
         $name = $name.Split([IO.Path]::GetInvalidFileNameChars()) -join "_"
 
+        Switch ($chat.chatType) {
+            "oneOnone" { $name = "[chat] " + $name }
+            "meeting" { $name = "[meeting] " + $name }
+            "group" { $name = "[group] " + $name}
+        }
+
         if ($name.length -gt 64) {
             $name = $name.Substring(0, 64)
         }
@@ -184,6 +234,7 @@ foreach ($chat in $chats) {
             $chatIdShortHash = (Get-FileHash -InputStream $chatIdStream -Algorithm SHA256).Hash.Substring(0,8)
             $file = $file.Replace(".html", ( " ($chatIdShortHash).html"))
         }
+
 
         if ($avoidOverwrite -eq $true) {
             Write-Verbose "Avoid overwrite enabled, appending counter if file path is not unique"
@@ -206,5 +257,7 @@ foreach ($chat in $chats) {
         Write-Host -ForegroundColor Yellow "Skipping..."
     }
 }
-
+if($cacheData) {
+    SaveUserCache(Get-CacheFileName $cacheFolder $me.id "users")
+}
 Write-Host -ForegroundColor Cyan "`r`nScript completed after $(((Get-Date) - $start).TotalSeconds)s... Bye!"

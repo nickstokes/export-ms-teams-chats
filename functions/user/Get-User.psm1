@@ -14,7 +14,6 @@ function Get-User ($userId, $clientId, $tenantId) {
         Write-Verbose "User cache miss, fetching."
 
         $start = Get-Date
-
         $userUri = "https://graph.microsoft.com/v1.0/users/" + $userId
     
         $user = Invoke-Retry -Code {
@@ -28,5 +27,15 @@ function Get-User ($userId, $clientId, $tenantId) {
         $users.Add($userId, $user)
     
         $user
+    }
+}
+
+function SaveUserCache($cacheFile) {
+    $users | ConvertTo-Json -Depth 10 | Out-File $cacheFile
+}
+
+function LoadUserCache($cacheFile) {
+    if (Test-Path -Path $cacheFile -PathType leaf ) {
+        $script:users = Get-Content -Raw $cacheFile | ConvertFrom-Json
     }
 }

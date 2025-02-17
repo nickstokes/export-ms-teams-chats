@@ -3,3 +3,4 @@ out
 
 # dependencies
 node_modules/
+/.vs/export-ms-teams-chats/config/applicationhost.config

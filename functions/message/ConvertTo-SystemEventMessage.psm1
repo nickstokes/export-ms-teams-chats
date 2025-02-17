@@ -13,13 +13,36 @@ function ConvertTo-SystemEventMessage ($eventDetail, $clientId, $tenantId) {
             "$(Get-Initiator $eventDetail.initiator $clientId, $tenantId) started a call."
             Break
         }
+        "#microsoft.graph.callRecordingEventMessageDetail" {
+            "Call recording available."
+            Break
+        }
         "#microsoft.graph.chatRenamedEventMessageDetail" {
             "$(Get-Initiator $eventDetail.initiator $clientId, $tenantId) changed the chat name to $($eventDetail.chatDisplayName)."
+            Break
+        }
+        "#microsoft.graph.membersJoinedEventMessageDetail" {
+            "$(Get-Initiator $eventDetail.initiator $clientId, $tenantId) added $(($eventDetail.members | ForEach-Object { Get-DisplayName $_.id $clientId $tenantId }) -join ", ")."
+
             Break
         }
         "#microsoft.graph.membersAddedEventMessageDetail" {
             "$(Get-Initiator $eventDetail.initiator $clientId, $tenantId) added $(($eventDetail.members | ForEach-Object { Get-DisplayName $_.id $clientId $tenantId }) -join ", ")."
 
+            Break
+        }
+        "#microsoft.graph.membersLeftEventMessageDetail" {
+            if (
+                ($eventDetail.members.count -eq 1) -and
+                ($null -ne $eventDetail.initiator.user) -and
+                ($eventDetail.initiator.user.id -eq $eventDetail.members[0].id)
+            ) {
+                "$(Get-DisplayName $eventDetail.members[0].id $clientId $tenantId) left."
+            }
+            else {
+                "$(Get-Initiator $eventDetail.initiator $clientId, $tenantId) removed $(($eventDetail.members | ForEach-Object { Get-DisplayName $_.id $clientId $tenantId }) -join ", ")."
+            }
+            
             Break
         }
         "#microsoft.graph.membersDeletedEventMessageDetail" {
@@ -48,6 +71,15 @@ function ConvertTo-SystemEventMessage ($eventDetail, $clientId, $tenantId) {
         }
         "#microsoft.graph.teamsAppRemovedEventMessageDetail" {
             "$(Get-Initiator $eventDetail.initiator $clientId, $tenantId) removed $($eventDetail.teamsAppDisplayName)."
+        }
+        "#microsoft.graph.teamJoiningEnabledEventMessageDetail" {
+            "$(Get-Initiator $eventDetail.initiator $clientId, $tenantId) enabled team joining."
+        }
+        "#microsoft.graph.meetingPolicyUpdatedEventMessageDetail" {
+            "$(Get-Initiator $eventDetail.initiator $clientId, $tenantId) updated meeting policy."
+        }
+        "#microsoft.graph.callTranscriptEventMessageDetail" {
+            "Call transcript is available."
         }
         Default {
             Write-Warning "Unhandled system event type: $($eventDetail."@odata.type")"

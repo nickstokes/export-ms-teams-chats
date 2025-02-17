@@ -216,9 +216,9 @@ foreach ($chat in ($chats | Where-Object {$_.chatType -ne "unknownFutureValue"})
         $name = $name.Split([IO.Path]::GetInvalidFileNameChars()) -join "_"
 
         Switch ($chat.chatType) {
-            "oneOnone" { $name = "[chat] " + $name }
-            "meeting" { $name = "[meeting] " + $name }
-            "group" { $name = "[group] " + $name}
+            "oneOnone" { $name = "(chat) " + $name }
+            "meeting" { $name = "(meeting) " + $name }
+            "group" { $name = "(group) " + $name}
         }
 
         if ($name.length -gt 64) {
@@ -251,6 +251,7 @@ foreach ($chat in ($chats | Where-Object {$_.chatType -ne "unknownFutureValue"})
 
         Write-Host -ForegroundColor Green "Exporting $file..."
         $chatHTML | Out-File -LiteralPath $file
+        (Get-Item $file).LastWriteTimeUtc = $chat.lastUpdatedDateTime
     }
     else {
         Write-Host ("`r`n$name :: No messages found.")
